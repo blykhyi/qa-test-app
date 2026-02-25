@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vulnerability Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; }
+
+        .topbar {
+            background: #1e293b; padding: 14px 24px; display: flex; align-items: center;
+            justify-content: space-between; border-bottom: 1px solid #334155;
+        }
+        .topbar h1 { font-size: 1.2em; color: #f1f5f9; display: flex; align-items: center; gap: 8px; }
+        .topbar h1::before { content: "🛡️"; }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+        /* Summary Cards */
+        .summary-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+        .card {
+            background: #1e293b; border-radius: 8px; padding: 16px;
+            border: 1px solid #334155;
+        }
+        .card-label { font-size: 0.75em; text-transform: uppercase; color: #94a3b8; margin-bottom: 4px; letter-spacing: 0.05em; }
+        .card-value { font-size: 1.8em; font-weight: 700; }
+        .card-critical .card-value { color: #ef4444; }
+        .card-high .card-value { color: #f97316; }
+        .card-medium .card-value { color: #eab308; }
+        .card-low .card-value { color: #3b82f6; }
+        .card-total .card-value { color: #f1f5f9; }
+
+        /* Table Section */
+        .section { background: #1e293b; border-radius: 8px; border: 1px solid #334155; margin-bottom: 24px; }
+        .section-header {
+            padding: 14px 18px; border-bottom: 1px solid #334155;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .section-header h2 { font-size: 1em; color: #f1f5f9; }
+
+        .filters { display: flex; gap: 8px; align-items: center; }
+        .filters select {
+            background: #0f172a; color: #e2e8f0; border: 1px solid #475569;
+            border-radius: 4px; padding: 6px 10px; font-size: 0.85em;
+        }
+        .btn {
+            display: inline-block; padding: 6px 14px; border: none; border-radius: 4px;
+            cursor: pointer; font-size: 0.85em; font-weight: 500;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-sm { padding: 3px 8px; font-size: 0.75em; }
+        .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #475569; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #1e293b; }
+        th { background: #0f172a; font-weight: 600; font-size: 0.75em; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+        td { font-size: 0.9em; }
+        tr:hover td { background: #1a2744; }
+
+        /* Severity badges */
+        .severity { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; font-weight: 600; text-transform: uppercase; }
+        .severity-critical { background: #7f1d1d; color: #fca5a5; }
+        .severity-high { background: #7c2d12; color: #fdba74; }
+        .severity-medium { background: #713f12; color: #fde047; }
+        .severity-low { background: #1e3a5f; color: #93c5fd; }
+
+        /* Status badges */
+        .status { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; font-weight: 500; }
+        .status-open { background: #422006; color: #fb923c; }
+        .status-confirmed { background: #1e1b4b; color: #a5b4fc; }
+        .status-in_progress { background: #0c4a6e; color: #7dd3fc; }
+        .status-resolved { background: #052e16; color: #86efac; }
+        .status-false_positive { background: #1e293b; color: #94a3b8; }
+
+        /* Status dropdown */
+        .status-select {
+            background: #0f172a; color: #e2e8f0; border: 1px solid #475569;
+            border-radius: 4px; padding: 3px 6px; font-size: 0.8em;
+        }
+
+        .cve-link { color: #60a5fa; text-decoration: none; }
+        .cve-link:hover { text-decoration: underline; }
+
+        .text-muted { color: #64748b; }
+
+        .message { padding: 8px 14px; border-radius: 4px; margin: 10px 18px; font-size: 0.85em; }
+        .message-success { background: #052e16; color: #86efac; border: 1px solid #166534; }
+        .message-error { background: #450a0a; color: #fca5a5; border: 1px solid #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>Vulnerability Dashboard</h1>
+        <span class="text-muted" id="last-updated"></span>
+    </div>
+
+    <div class="container">
+        <!-- Summary Cards -->
+        <div class="summary-cards">
+            <div class="card card-total">
+                <div class="card-label">Active Findings</div>
+                <div class="card-value" id="total-count">-</div>
+            </div>
+            <div class="card card-critical">
+                <div class="card-label">Critical</div>
+                <div class="card-value" id="critical-count">-</div>
+            </div>
+            <div class="card card-high">
+                <div class="card-label">High</div>
+                <div class="card-value" id="high-count">-</div>
+            </div>
+            <div class="card card-medium">
+                <div class="card-label">Medium</div>
+                <div class="card-value" id="medium-count">-</div>
+            </div>
+            <div class="card card-low">
+                <div class="card-label">Low</div>
+                <div class="card-value" id="low-count">-</div>
+            </div>
+        </div>
+
+        <!-- Findings Table -->
+        <div class="section">
+            <div class="section-header">
+                <h2>Findings</h2>
+                <div class="filters">
+                    <select id="filter-severity" onchange="loadFindings()">
+                        <option value="">All Severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                    </select>
+                    <select id="filter-status" onchange="loadFindings()">
+                        <option value="">All Statuses</option>
+                        <option value="open">Open</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="false_positive">False Positive</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadFindings()">Refresh</button>
+                </div>
+            </div>
+            <div id="findings-message"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>CVE</th>
+                        <th>Title</th>
+                        <th>Severity</th>
+                        <th>CVSS</th>
+                        <th>Asset</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="findings-table"></tbody>
+            </table>
+        </div>
+
+        <!-- Assets Overview -->
+        <div class="section">
+            <div class="section-header">
+                <h2>Assets</h2>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Hostname</th>
+                        <th>IP</th>
+                        <th>Type</th>
+                        <th>Environment</th>
+                    </tr>
+                </thead>
+                <tbody id="assets-table"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
