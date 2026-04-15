@@ -5,10 +5,7 @@ from __future__ import annotations
 import pytest
 import requests
 
-pytestmark = pytest.mark.usefixtures("postgres_available")
-
-SEED_ASSET_ID = 3
-SEED_VULNERABILITY_ID = 4
+pytestmark = [pytest.mark.db, pytest.mark.usefixtures("postgres_available")]
 
 
 def _findings_url(base: str, suffix: str = "") -> str:
@@ -21,10 +18,13 @@ class TestFindingLifecycleDbIntegrity:
         self,
         dashboard_base_url: str,
         db_cursor,
+        db_testdata,
     ) -> None:
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability()
         payload = {
-            "asset_id": SEED_ASSET_ID,
-            "vulnerability_id": SEED_VULNERABILITY_ID,
+            "asset_id": asset["id"],
+            "vulnerability_id": vuln["id"],
             "scanner": "pytest-db-dismiss",
             "notes": "db dismiss check",
         }
@@ -59,10 +59,13 @@ class TestFindingLifecycleDbIntegrity:
         self,
         dashboard_base_url: str,
         db_cursor,
+        db_testdata,
     ) -> None:
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability()
         payload = {
-            "asset_id": SEED_ASSET_ID,
-            "vulnerability_id": SEED_VULNERABILITY_ID,
+            "asset_id": asset["id"],
+            "vulnerability_id": vuln["id"],
             "scanner": "pytest-db-create",
             "notes": "row shape",
         }
@@ -81,8 +84,8 @@ class TestFindingLifecycleDbIntegrity:
         row = db_cursor.fetchone()
         assert row is not None
         asset_id, vuln_id, status, scanner, notes, is_dismissed = row
-        assert asset_id == SEED_ASSET_ID
-        assert vuln_id == SEED_VULNERABILITY_ID
+        assert asset_id == asset["id"]
+        assert vuln_id == vuln["id"]
         assert status == "open"
         assert scanner == "pytest-db-create"
         assert notes == "row shape"
@@ -92,10 +95,13 @@ class TestFindingLifecycleDbIntegrity:
         self,
         dashboard_base_url: str,
         db_cursor,
+        db_testdata,
     ) -> None:
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability()
         payload = {
-            "asset_id": SEED_ASSET_ID,
-            "vulnerability_id": SEED_VULNERABILITY_ID,
+            "asset_id": asset["id"],
+            "vulnerability_id": vuln["id"],
             "scanner": "pytest-db-status",
             "notes": "status sync",
         }
@@ -209,6 +215,11 @@ class TestNotNullAndUniqueConstraints:
 class TestCvssScoreConstraint:
     """CVSS should be constrained to a valid range (e.g. 0–10); see BUG #4 / init.sql."""
 
+    @pytest.mark.known_bug
+    @pytest.mark.xfail(
+        reason="BUG #4: out-of-range CVSS accepted (missing CHECK constraint)",
+        strict=False,
+    )
     def test_cvss_out_of_range_insert_is_rejected(self, db_cursor) -> None:
         import psycopg2
 

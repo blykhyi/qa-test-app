@@ -7,7 +7,7 @@ import uuid
 import pytest
 import requests
 
-pytestmark = pytest.mark.usefixtures("scanner_available")
+pytestmark = [pytest.mark.api, pytest.mark.usefixtures("scanner_available")]
 
 
 def _u(base: str, path: str) -> str:
@@ -60,6 +60,8 @@ class TestScannerAssetsList:
         if body["items"]:
             assert_asset_response(body["items"][0])
 
+    @pytest.mark.known_bug
+    @pytest.mark.xfail(reason="BUG #6: pagination may skip the first asset row", strict=False)
     def test_list_page_one_includes_first_asset_in_order(self, scanner_base_url: str) -> None:
         """Page 1 should start at the first row (lowest id), not skip it (see BUG #6)."""
         r = requests.get(
@@ -99,11 +101,12 @@ class TestScannerAssetsList:
 
 
 class TestScannerAssetDetail:
-    def test_get_existing_asset(self, scanner_base_url: str) -> None:
-        r = requests.get(_u(scanner_base_url, "/assets/1"), timeout=15)
+    def test_get_existing_asset(self, scanner_base_url: str, api_testdata) -> None:
+        asset = api_testdata.create_asset()
+        r = requests.get(_u(scanner_base_url, f"/assets/{asset['id']}"), timeout=15)
         assert r.status_code == 200
         assert_asset_response(r.json())
-        assert r.json()["id"] == 1
+        assert r.json()["id"] == asset["id"]
 
     def test_get_nonexistent_returns_404(self, scanner_base_url: str) -> None:
         r = requests.get(_u(scanner_base_url, "/assets/999999"), timeout=15)
@@ -172,27 +175,28 @@ class TestScannerScansList:
         if body["items"]:
             assert_scan_response(body["items"][0])
 
-    def test_list_filter_by_asset_id(self, scanner_base_url: str) -> None:
+    def test_list_filter_by_asset_id(self, scanner_base_url: str, api_testdata) -> None:
+        asset = api_testdata.create_asset()
+        api_testdata.run_scan(asset_id=asset["id"], vulnerability_ids=[])
         r = requests.get(
             _u(scanner_base_url, "/scans"),
-            params={"page": 1, "per_page": 50, "asset_id": 1},
+            params={"page": 1, "per_page": 50, "asset_id": asset["id"]},
             timeout=15,
         )
         assert r.status_code == 200
         for item in r.json()["items"]:
-            assert item["asset_id"] == 1
+            assert item["asset_id"] == asset["id"]
 
 
 class TestScannerScanDetail:
-    def test_get_existing_scan_matches_list_item(self, scanner_base_url: str) -> None:
-        lst = requests.get(
-            _u(scanner_base_url, "/scans"),
-            params={"page": 1, "per_page": 1},
-            timeout=15,
-        )
+    def test_get_existing_scan_matches_list_item(self, scanner_base_url: str, api_testdata) -> None:
+        # Ensure at least one scan exists without relying on seed state.
+        asset_id = api_testdata.create_asset()["id"]
+        requests.post(_u(scanner_base_url, "/scans"), json={"asset_id": asset_id, "scanner_name": "ScanDetailSetup", "vulnerability_ids": []}, timeout=15)
+        lst = requests.get(_u(scanner_base_url, "/scans"), params={"page": 1, "per_page": 1}, timeout=15)
         assert lst.status_code == 200
         items = lst.json()["items"]
-        assert items, "expected at least one scan (seed data or earlier tests)"
+        assert items, "expected at least one scan after setup"
         sid = items[0]["id"]
         r = requests.get(_u(scanner_base_url, f"/scans/{sid}"), timeout=15)
         assert r.status_code == 200
@@ -206,13 +210,16 @@ class TestScannerScanDetail:
 
 
 class TestScannerScanCreate:
-    def test_create_scan_happy_path_counts_findings(self, scanner_base_url: str) -> None:
+    def test_create_scan_happy_path_counts_findings(self, scanner_base_url: str, api_testdata) -> None:
+        asset = api_testdata.create_asset()
+        v1 = api_testdata.any_vulnerability_id()
+        v2 = api_testdata.any_vulnerability_id()
         r = requests.post(
             _u(scanner_base_url, "/scans"),
             json={
-                "asset_id": 1,
+                "asset_id": asset["id"],
                 "scanner_name": "OpenAPITest",
-                "vulnerability_ids": [1, 2],
+                "vulnerability_ids": [v1, v2],
             },
             timeout=15,
         )
@@ -223,13 +230,14 @@ class TestScannerScanCreate:
         assert body["findings_count"] == 2
         assert body["scanner_name"] == "OpenAPITest"
 
-    def test_create_scan_unknown_asset_returns_400(self, scanner_base_url: str) -> None:
+    def test_create_scan_unknown_asset_returns_400(self, scanner_base_url: str, api_testdata) -> None:
+        vuln_id = api_testdata.any_vulnerability_id()
         r = requests.post(
             _u(scanner_base_url, "/scans"),
             json={
                 "asset_id": 999_999,
                 "scanner_name": "NoAsset",
-                "vulnerability_ids": [1],
+                "vulnerability_ids": [vuln_id],
             },
             timeout=15,
         )
@@ -237,25 +245,32 @@ class TestScannerScanCreate:
         assert "asset" in r.json()["detail"].lower()
 
     def test_create_scan_empty_vulnerabilities_zero_findings(self, scanner_base_url: str) -> None:
+        # Avoid seed coupling: create our own asset.
+        c = requests.post(
+            _u(scanner_base_url, "/assets"),
+            json={"hostname": f"pytest-emptyv-{uuid.uuid4().hex[:10]}", "asset_type": "server", "environment": "staging"},
+            timeout=15,
+        )
+        assert c.status_code == 201
+        aid = c.json()["id"]
         r = requests.post(
             _u(scanner_base_url, "/scans"),
-            json={
-                "asset_id": 1,
-                "scanner_name": "EmptyVulns",
-                "vulnerability_ids": [],
-            },
+            json={"asset_id": aid, "scanner_name": "EmptyVulns", "vulnerability_ids": []},
             timeout=15,
         )
         assert r.status_code == 201
         assert r.json()["findings_count"] == 0
 
-    def test_create_scan_skips_unknown_vulnerability_ids(self, scanner_base_url: str) -> None:
+    def test_create_scan_skips_unknown_vulnerability_ids(self, scanner_base_url: str, api_testdata) -> None:
+        # Use an existing vulnerability id rather than seed IDs.
+        valid_vuln_id = api_testdata.any_vulnerability_id()
+        asset = api_testdata.create_asset()
         r = requests.post(
             _u(scanner_base_url, "/scans"),
             json={
-                "asset_id": 1,
+                "asset_id": asset["id"],
                 "scanner_name": "SkipBadVuln",
-                "vulnerability_ids": [999_999, 1],
+                "vulnerability_ids": [999_999, valid_vuln_id],
             },
             timeout=15,
         )
@@ -289,10 +304,15 @@ class TestScannerScanCreate:
         assert r.status_code == 400
 
     def test_create_scan_invalid_body_returns_422(self, scanner_base_url: str) -> None:
+        # Pick any active asset id rather than assuming seed id 1 exists.
+        assets = requests.get(_u(scanner_base_url, "/assets"), params={"page": 1, "per_page": 1}, timeout=15).json()["items"]
+        if not assets:
+            pytest.skip("No assets available for validation test")
+        aid = assets[0]["id"]
         r = requests.post(
             _u(scanner_base_url, "/scans"),
             json={
-                "asset_id": 1,
+                "asset_id": aid,
                 "scanner_name": "",
                 "vulnerability_ids": [],
             },

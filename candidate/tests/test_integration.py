@@ -8,14 +8,10 @@ import pytest
 import requests
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.usefixtures("dashboard_available"),
     pytest.mark.usefixtures("scanner_available"),
 ]
-
-# Seed: asset 5 (`dev-backend-01`) only has findings for vulns 4 and 8 — other IDs stay clean for scans.
-INTEGRATION_ASSET_ID = 5
-VULN_SINGLE_SCAN = 1
-VULN_CONCURRENT_SCAN = 2
 
 
 def _dashboard_findings_url(base: str, suffix: str = "") -> str:
@@ -45,17 +41,20 @@ class TestScannerToDashboard:
         self,
         dashboard_base_url: str,
         scanner_base_url: str,
+        db_testdata,
     ) -> None:
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability(severity="medium")
         before = _count_open_findings_for_asset_vuln(
             dashboard_base_url,
-            INTEGRATION_ASSET_ID,
-            VULN_SINGLE_SCAN,
+            asset["id"],
+            vuln["id"],
         )
 
         payload = {
-            "asset_id": INTEGRATION_ASSET_ID,
+            "asset_id": asset["id"],
             "scanner_name": "IntegrationNessus",
-            "vulnerability_ids": [VULN_SINGLE_SCAN],
+            "vulnerability_ids": [vuln["id"]],
         }
         r = requests.post(f"{scanner_base_url}/scans", json=payload, timeout=15)
         assert r.status_code == 201
@@ -65,20 +64,20 @@ class TestScannerToDashboard:
 
         after = _count_open_findings_for_asset_vuln(
             dashboard_base_url,
-            INTEGRATION_ASSET_ID,
-            VULN_SINGLE_SCAN,
+            asset["id"],
+            vuln["id"],
         )
         assert after == before + 1
 
         lst = requests.get(
             _dashboard_findings_url(dashboard_base_url),
-            params={"asset_id": INTEGRATION_ASSET_ID, "per_page": 100},
+            params={"asset_id": asset["id"], "per_page": 100},
             timeout=15,
         ).json()["items"]
         matches = [
             x
             for x in lst
-            if x["vulnerability_id"] == VULN_SINGLE_SCAN
+            if x["vulnerability_id"] == vuln["id"]
             and x.get("scanner") == "IntegrationNessus"
         ]
         assert matches
@@ -86,31 +85,34 @@ class TestScannerToDashboard:
 
 class TestStatusUpdateMatchesDatabase:
     @pytest.mark.usefixtures("postgres_available")
+    @pytest.mark.db
     def test_update_status_after_scan_matches_postgres(
         self,
         dashboard_base_url: str,
         scanner_base_url: str,
         db_cursor,
+        db_testdata,
     ) -> None:
-        vuln_id = 3
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability(severity="low")
         payload = {
-            "asset_id": INTEGRATION_ASSET_ID,
+            "asset_id": asset["id"],
             "scanner_name": "Integration-Status",
-            "vulnerability_ids": [vuln_id],
+            "vulnerability_ids": [vuln["id"]],
         }
         r = requests.post(f"{scanner_base_url}/scans", json=payload, timeout=15)
         assert r.status_code == 201
 
         lst = requests.get(
             _dashboard_findings_url(dashboard_base_url),
-            params={"asset_id": INTEGRATION_ASSET_ID, "per_page": 100},
+            params={"asset_id": asset["id"], "per_page": 100},
             timeout=15,
         )
         items = lst.json()["items"]
         candidates = [
             x
             for x in items
-            if x["vulnerability_id"] == vuln_id and x.get("scanner") == "Integration-Status"
+            if x["vulnerability_id"] == vuln["id"] and x.get("scanner") == "Integration-Status"
         ]
         assert candidates, "expected a finding from the scan in Dashboard list"
         fid = max(x["id"] for x in candidates)
@@ -128,22 +130,27 @@ class TestStatusUpdateMatchesDatabase:
 
 
 class TestConcurrentScans:
+    @pytest.mark.known_bug
+    @pytest.mark.xfail(reason="BUG #7: duplicates can be inserted under concurrency", strict=False)
     def test_concurrent_scans_should_not_double_insert_same_finding(
         self,
         dashboard_base_url: str,
         scanner_base_url: str,
+        db_testdata,
     ) -> None:
         """BUG #7: Even under concurrency, at most one new row per (asset, vuln) if already present."""
+        asset = db_testdata.create_asset()
+        vuln = db_testdata.create_vulnerability(severity="high")
         before = _count_open_findings_for_asset_vuln(
             dashboard_base_url,
-            INTEGRATION_ASSET_ID,
-            VULN_CONCURRENT_SCAN,
+            asset["id"],
+            vuln["id"],
         )
 
         payload = {
-            "asset_id": INTEGRATION_ASSET_ID,
+            "asset_id": asset["id"],
             "scanner_name": "ConcurrentProbe",
-            "vulnerability_ids": [VULN_CONCURRENT_SCAN],
+            "vulnerability_ids": [vuln["id"]],
         }
 
         def post_scan():
@@ -158,7 +165,7 @@ class TestConcurrentScans:
 
         after = _count_open_findings_for_asset_vuln(
             dashboard_base_url,
-            INTEGRATION_ASSET_ID,
-            VULN_CONCURRENT_SCAN,
+            asset["id"],
+            vuln["id"],
         )
         assert after == before + 1

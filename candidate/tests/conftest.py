@@ -6,6 +6,9 @@ from typing import Any, Generator
 import pytest
 import requests
 
+from tests.helpers.api_clients import DashboardApiClient, ScannerApiClient
+from tests.helpers.factories import ApiTestDataFactory, TestDataFactory
+
 DEFAULT_DASHBOARD_URL = os.environ.get("DASHBOARD_API_URL", "http://localhost:8000").rstrip("/")
 DEFAULT_SCANNER_URL = os.environ.get("SCANNER_SERVICE_URL", "http://localhost:8001").rstrip("/")
 
@@ -66,6 +69,16 @@ def scanner_base_url() -> str:
 
 
 @pytest.fixture(scope="session")
+def dashboard_client(dashboard_base_url: str) -> DashboardApiClient:
+    return DashboardApiClient(base_url=dashboard_base_url)
+
+
+@pytest.fixture(scope="session")
+def scanner_client(scanner_base_url: str) -> ScannerApiClient:
+    return ScannerApiClient(base_url=scanner_base_url)
+
+
+@pytest.fixture(scope="session")
 def scanner_available(scanner_base_url: str) -> None:
     """Skip integration tests when the Scanner service is not running."""
     try:
@@ -85,3 +98,28 @@ def dashboard_available(dashboard_base_url: str) -> None:
         pytest.skip(f"Dashboard API unreachable: {exc}")
     if r.status_code != 200:
         pytest.skip(f"Dashboard API unhealthy: HTTP {r.status_code}")
+
+
+@pytest.fixture
+def api_testdata(
+    dashboard_client: DashboardApiClient,
+    scanner_client: ScannerApiClient,
+) -> Generator[ApiTestDataFactory, None, None]:
+    factory = ApiTestDataFactory(dashboard=dashboard_client, scanner=scanner_client)
+    try:
+        yield factory
+    finally:
+        factory.cleanup()
+
+
+@pytest.fixture
+def db_testdata(
+    dashboard_client: DashboardApiClient,
+    scanner_client: ScannerApiClient,
+    db_cursor,
+) -> Generator[TestDataFactory, None, None]:
+    factory = TestDataFactory(dashboard=dashboard_client, scanner=scanner_client, db_cursor=db_cursor)
+    try:
+        yield factory
+    finally:
+        factory.cleanup()

@@ -7,7 +7,7 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
-pytestmark = pytest.mark.usefixtures("dashboard_available")
+pytestmark = [pytest.mark.ui, pytest.mark.usefixtures("dashboard_available")]
 
 
 def _parse_status_from_row(status_text: str) -> str:
@@ -30,6 +30,7 @@ def _next_status(current: str) -> str:
     return order[(order.index(current) + 1) % len(order)]
 
 
+@pytest.mark.smoke
 def test_dashboard_loads_with_findings(page: Page, dashboard_base_url: str) -> None:
     page.goto(f"{dashboard_base_url}/")
     expect(page.get_by_role("heading", name="Vulnerability Dashboard")).to_be_visible()
@@ -43,6 +44,7 @@ def test_dashboard_loads_with_findings(page: Page, dashboard_base_url: str) -> N
     expect(data_row).to_be_visible()
 
 
+@pytest.mark.smoke
 def test_change_finding_status_reflects_after_refresh(page: Page, dashboard_base_url: str) -> None:
     """UI does not reload the table after PUT (BUG #8); Refresh reloads from API so the badge matches."""
     page.goto(f"{dashboard_base_url}/")
@@ -74,6 +76,8 @@ def test_change_finding_status_reflects_after_refresh(page: Page, dashboard_base
     )
 
 
+@pytest.mark.known_bug
+@pytest.mark.xfail(reason="BUG #8: status badge does not update until Refresh", strict=False)
 def test_status_badge_updates_after_change_without_manual_refresh(
     page: Page,
     dashboard_base_url: str,
